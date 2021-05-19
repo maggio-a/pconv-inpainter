@@ -253,7 +253,7 @@ def train(train_dl, test_dl, model, loss_function, optimizer, device, current_ep
 
         batch_time.update(timer.elapsed())
 
-        if i % 10 == 0:
+        if i % 50 == 0:
             mem = (torch.cuda.memory_allocated() + torch.cuda.memory_reserved()) // 1024**2
             print(f'[{i}/{len(train_dl)}] {loss_run_avg} | {data_time} | {batch_time} | Allocated memory: {mem} MBs')
 
