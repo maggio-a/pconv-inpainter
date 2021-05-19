@@ -171,21 +171,15 @@ class IrregularHolesLoss(torch.nn.Module):
 #        hole_loss = self.l1(torch.mul((1 - mask_in), (img_out - img_in)))
 #        valid_loss = self.compute_valid_loss()
 
-        with torch.no_grad():
-            img_gt_normalized = self.normalize(img_gt)
-            img_gt_normalized.requires_grad = False
+        img_gt_normalized = self.normalize(img_gt)
         img_out_normalized = self.normalize(img_out)
         img_comp_normalized = self.normalize(img_comp)
 
-        with torch.no_grad():
-            gt_features, gt_shapes = self._extract_vgg_features(img_gt)
-        out_features, out_shapes = self._extract_vgg_features(img_out)
-        comp_features, comp_shapes = self._extract_vgg_features(img_comp)
+        gt_features, gt_shapes = self._extract_vgg_features(img_gt_normalized)
+        out_features, out_shapes = self._extract_vgg_features(img_out_normalized)
+        comp_features, comp_shapes = self._extract_vgg_features(img_comp_normalized)
 
         assert gt_shapes == out_shapes and gt_shapes == comp_shapes
-
-        for i in range(len(gt_features)):
-            gt_features[i].requires_grad = False
 
         perceptual_loss = sum(self.l1(out_features[i], gt_features[i]) + self.l1(comp_features[i], gt_features[i])
                               for i in range(3))
@@ -193,8 +187,7 @@ class IrregularHolesLoss(torch.nn.Module):
         K = [(1 / (c*wh)) for b, c, wh in gt_shapes]
         C = [(1 / (c * c)) for b, c, wh in gt_shapes]
 
-        with torch.no_grad():
-            gt_gram = [K[i] * torch.matmul(gt_features[i], torch.transpose(gt_features[i], 1, 2)) for i in range(3)]
+        gt_gram = [K[i] * torch.matmul(gt_features[i], torch.transpose(gt_features[i], 1, 2)) for i in range(3)]
         out_gram = [K[i] * torch.matmul(out_features[i], torch.transpose(out_features[i], 1, 2)) for i in range(3)]
         comp_gram = [K[i] * torch.matmul(comp_features[i], torch.transpose(comp_features[i], 1, 2)) for i in range(3)]
 
