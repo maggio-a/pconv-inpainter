@@ -7,6 +7,7 @@ import torchvision.utils
 import torchvision.transforms as transforms
 
 import pconv.modules as pcmodules
+import pconv.layers as pclayers
 
 import utils.mask
 from utils.metering import Timer, RunningAverage
@@ -32,10 +33,12 @@ class Args:
 
         self.load_checkpoint = None
         self.save_checkpoint_dir = './checkpoints'
-        self.coarse_checkpoint_step = 20
+        self.coarse_checkpoint_step = 5
 
         self.mode = 'train'  # either 'train' or 'test'
-        self.tuning_phase = True
+        self.tuning_phase = False
+
+        self.useAMP = False
 
         self.nepochs = 100
 
@@ -73,10 +76,10 @@ def main():
 
     lr = 0.0002
 
-    train_loss_history = []
-    val_loss_history = []
+    history = []
 
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    scaler = torch.cuda.amp.GradScaler(enabled=args.useAMP)
 
     current_epoch = 0
 
@@ -88,10 +91,16 @@ def main():
             current_epoch = checkpoint['current_epoch']
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            train_loss_history = checkpoint['train_loss_history']
-            val_loss_history = checkpoint['val_loss_history']
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            history = checkpoint['history']
         else:
             print(f'Checkpoint file {args.load_checkpoint} not found')
+
+    if args.useAMP:
+        for layer in model.children():
+            if type(layer) == pclayers.PartialConv2d:
+                print(layer.eps)
+                layer.eps = 1e-6
 
     if args.tuning_phase:
         # adjust learning rate
@@ -170,8 +179,8 @@ def main():
     if args.mode == 'train':
         for epoch in range(args.nepochs):
             current_epoch += 1
-            train(train_dl, test_dl, model, loss_function, optimizer, device,
-                  current_epoch, args, train_loss_history, val_loss_history)
+            train(train_dl, test_dl, model, loss_function, optimizer, scaler, device,
+                  current_epoch, args, history)
     elif args.mode == 'test':
         validate(test_dl, model, loss_function, device, args)
     else:
@@ -221,8 +230,7 @@ def validate(dataloader, model, loss_function, device, args) -> RunningAverage:
 ##############################
 
 
-def train(train_dl, test_dl, model, loss_function, optimizer, device, current_epoch, args,
-          train_loss_history, val_loss_history):
+def train(train_dl, test_dl, model, loss_function, optimizer, scaler, device, current_epoch, args, history):
     #torch.autograd.set_detect_anomaly(True)
 
     model.train()
@@ -242,18 +250,20 @@ def train(train_dl, test_dl, model, loss_function, optimizer, device, current_ep
 
         data_time.update(timer.elapsed())
 
-        prediction, _ = model(masked_img_batch, mask_batch)
-        loss_val = loss_function(gt_batch, mask_batch, prediction)
+        with torch.cuda.amp.autocast(enabled=args.useAMP):
+            prediction, _ = model(masked_img_batch, mask_batch)
+            loss_val = loss_function(gt_batch, mask_batch, prediction)
 
         loss_run_avg.update(loss_val.item(), masked_img_batch.size(0))
 
-        loss_val.backward()
-        optimizer.step()
+        scaler.scale(loss_val).backward()
+        scaler.step(optimizer)
+        scaler.update()
         optimizer.zero_grad()
 
         batch_time.update(timer.elapsed())
 
-        if i % 50 == 0:
+        if i % 10 == 0:
             mem = (torch.cuda.memory_allocated() + torch.cuda.memory_reserved()) // 1024**2
             print(f'[{i}/{len(train_dl)}] {loss_run_avg} | {data_time} | {batch_time} | Allocated memory: {mem} MBs')
 
@@ -267,8 +277,11 @@ def train(train_dl, test_dl, model, loss_function, optimizer, device, current_ep
         print('Recording loss history')
         val_loss_run_avg = validate(test_dl, model, loss_function, device, args)
 
-        train_loss_history.append(loss_run_avg.avg)
-        val_loss_history.append(val_loss_run_avg.avg)
+        history.append({
+            'train_loss': loss_run_avg.avg,
+            'val_loss': val_loss_run_avg.avg,
+            'finetuning': args.tuning_phase
+        })
         loss_run_avg.reset()
 
         print('Saving checkpoint...')
@@ -278,8 +291,8 @@ def train(train_dl, test_dl, model, loss_function, optimizer, device, current_ep
             'current_epoch': current_epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss_history': train_loss_history,
-            'val_loss_history': val_loss_history
+            'scaler_state_dict': scaler.state_dict(),
+            'history': history
         }, checkpoint_path)
 
         if current_epoch % args.coarse_checkpoint_step == 0:

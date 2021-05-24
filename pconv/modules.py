@@ -160,22 +160,18 @@ class IrregularHolesLoss(torch.nn.Module):
         return vgg_features, vgg_shapes
 
     def forward(self, img_gt, mask_in, img_out) -> torch.Tensor:
+        device = img_out.device
         img_comp = torch.mul(img_gt, mask_in) + torch.mul(img_out, (1 - mask_in))
 
         hole_loss = ((1 - mask_in) * torch.abs(img_gt - img_out)).mean()
         valid_loss = (mask_in * torch.abs(img_gt - img_out)).mean()
-        #reconstruction_weight = 5 * mask_in + 1    # L_valid + 6 * L_hole in the paper
-        #reconstruction_loss = self.l1(torch.mul(reconstruction_weight, img_gt),
-        #                              torch.mul(reconstruction_weight, img_out))
-
-#        hole_loss = self.l1(torch.mul((1 - mask_in), (img_out - img_in)))
-#        valid_loss = self.compute_valid_loss()
 
         img_gt_normalized = self.normalize(img_gt)
         img_out_normalized = self.normalize(img_out)
         img_comp_normalized = self.normalize(img_comp)
 
-        gt_features, gt_shapes = self._extract_vgg_features(img_gt_normalized)
+        with torch.no_grad():
+            gt_features, gt_shapes = self._extract_vgg_features(img_gt_normalized)
         out_features, out_shapes = self._extract_vgg_features(img_out_normalized)
         comp_features, comp_shapes = self._extract_vgg_features(img_comp_normalized)
 
@@ -184,20 +180,23 @@ class IrregularHolesLoss(torch.nn.Module):
         perceptual_loss = sum(self.l1(out_features[i], gt_features[i]) + self.l1(comp_features[i], gt_features[i])
                               for i in range(3))
 
-        K = [(1 / (c*wh)) for b, c, wh in gt_shapes]
-        C = [(1 / (c * c)) for b, c, wh in gt_shapes]
+        K = [(1 / (c * wh)) for b, c, wh in gt_shapes]
+        C = [(b, c, c) for b, c, _ in gt_shapes]
 
-        gt_gram = [K[i] * torch.matmul(gt_features[i], torch.transpose(gt_features[i], 1, 2)) for i in range(3)]
-        out_gram = [K[i] * torch.matmul(out_features[i], torch.transpose(out_features[i], 1, 2)) for i in range(3)]
-        comp_gram = [K[i] * torch.matmul(comp_features[i], torch.transpose(comp_features[i], 1, 2)) for i in range(3)]
+        style_out_loss = 0
+        style_comp_loss = 0
+        for i in range(3):
+            gt_gram = torch.baddbmm(torch.zeros(C[i], device=device), gt_features[i], torch.transpose(gt_features[i], 1, 2), beta=0, alpha=K[i])
+            out_gram = torch.baddbmm(torch.zeros(C[i], device=device), out_features[i], torch.transpose(out_features[i], 1, 2), beta=0, alpha=K[i])
+            comp_gram = torch.baddbmm(torch.zeros(C[i], device=device), comp_features[i], torch.transpose(comp_features[i], 1, 2), beta=0, alpha=K[i])
+            style_out_loss += self.l1(out_gram, gt_gram)
+            style_comp_loss += self.l1(comp_gram, gt_gram)
 
-        style_out_loss = sum(C[i] * self.l1(out_gram[i], gt_gram[i]) for i in range(3))
-
-        style_comp_loss = sum(C[i] * self.l1(comp_gram[i], gt_gram[i]) for i in range(3))
-
-        dilated_mask = F.conv2d(1 - mask_in,
-                                torch.ones((mask_in.shape[1], mask_in.shape[1], 3, 3), device=mask_in.device),
-                                padding=1)
+        with torch.no_grad():
+            dilated_mask = F.conv2d(1 - mask_in,
+                                    torch.ones((mask_in.shape[1], mask_in.shape[1], 3, 3), device=device),
+                                    padding=1)
+            dilated_mask = torch.clamp(dilated_mask, 0, 1)
 
         r_comp = torch.mul(dilated_mask, img_comp)  # img_comp restricted to the 1-pixel dilation of the hole region
 
