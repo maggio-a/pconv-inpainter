@@ -78,7 +78,7 @@ def main():
 
     history = []
 
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     scaler = torch.cuda.amp.GradScaler(enabled=args.useAMP)
 
     current_epoch = 0
@@ -96,21 +96,21 @@ def main():
         else:
             print(f'Checkpoint file {args.load_checkpoint} not found')
 
-    if args.useAMP:
-        for layer in model.children():
-            if type(layer) == pclayers.PartialConv2d:
-                print(layer.eps)
-                layer.eps = 1e-6
-
     if args.tuning_phase:
         # adjust learning rate
         lr = 0.00005
 
-        # freeze encoding batchnorm
-        for layer in model.children():
-            if type(layer) == pcmodules.UNet.EncoderBlock:
-                for parameter in layer.parameters():
-                    parameter.requires_grad = False
+        # freeze encoding batch normalization
+        for block in model.modules():
+            if type(block) == pcmodules.UNet.EncoderBlock:
+                for layer in block.children():
+                    if type(layer) == torch.nn.BatchNorm2d:
+                        for parameter in layer.parameters():
+                            parameter.requires_grad = False
+
+        # when finetuning clear the optimization state
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+        scaler = torch.cuda.amp.GradScaler(enabled=args.useAMP)
 
     ##############################
     # Build dataset and DataLoader

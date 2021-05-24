@@ -51,14 +51,14 @@ class PartialConv2d(torch.nn.Module):
 
         self.out_mask = None
         self.scaling = None
-        self.eps = 1e-8
 
     def forward(self, in_image: torch.Tensor, in_mask: torch.Tensor):
         with torch.no_grad():
             self.out_mask = F.conv2d(in_mask, self.kernel_ones, bias=None, stride=self.stride, padding=self.padding,
                                      dilation=self.dilation, groups=self.groups)
 
-            self.scaling = torch.div(self.kernel_volume, (self.out_mask + self.eps))
+            self.out_mask[self.out_mask == 0] = -1
+            self.scaling = torch.div(self.kernel_volume, self.out_mask)
             self.out_mask = torch.clamp(self.out_mask, 0, 1)
             self.scaling = torch.mul(self.scaling, self.out_mask)  # clear masked pixels from self.scaling
 
