@@ -27,7 +27,13 @@ class Args:
 
         self.gpu = True
 
-        self.dataset_path = './dataset/Places365_val_large'
+        self.train_dataset_path = 'path_to_train_dataset'
+        self.test_dataset_path = 'path_to_test_dataset'
+        self.mask_dataset_path = 'path_to_mask_dataset'
+
+        self.nepochs = 1000
+        self.samples_per_epoch = 30000
+        self.samples_per_validation = 5000
 
         self.batch_size = 6
 
@@ -39,8 +45,6 @@ class Args:
         self.tuning_phase = False
 
         self.useAMP = False
-
-        self.nepochs = 100
 
 
 def main():
@@ -90,7 +94,8 @@ def main():
 
             current_epoch = checkpoint['current_epoch']
             model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if len(checkpoint['scaler_state_dict']) > 0:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scaler.load_state_dict(checkpoint['scaler_state_dict'])
             history = checkpoint['history']
         else:
@@ -104,6 +109,7 @@ def main():
         for block in model.modules():
             if type(block) == pcmodules.UNet.EncoderBlock:
                 for layer in block.children():
+                    print('Freezing layer ', layer)
                     if type(layer) == torch.nn.BatchNorm2d:
                         for parameter in layer.parameters():
                             parameter.requires_grad = False
@@ -117,24 +123,37 @@ def main():
     ##############################
 
     image_size = 512
-    mask_items = 15
 
-    transform = transforms.Compose([
+    data_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
         transforms.RandomCrop(image_size, pad_if_needed=True, padding_mode='reflect'),
         transforms.ToTensor()
     ])
 
-    full_dataset = utils.mask.MaskedImageFolder(args.dataset_path, mask_generator_items=mask_items, transform=transform)
-    full_size = len(full_dataset)
-    train_size = int(0.96 * full_size)
-    train_dataset = Subset(full_dataset, range(train_size))
-    test_dataset = Subset(full_dataset, range(train_size, full_size))
+    mask_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomAffine(degrees=90, translate=(0.2, 0.2), shear=(-15, 15, -15, 15)),
+        transforms.Resize(size=(image_size, image_size)),
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: (x == 0).float())
+    ])
 
-    train_dl = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    test_dl = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    train_mask_loader = utils.mask.MaskLoader(args.mask_dataset_path, transform=mask_transform)
+    test_mask_loader = utils.mask.MaskLoader(args.mask_dataset_path, transform=mask_transform)
+
+    train_dataset = utils.mask.ImageFolderWithMaskLoader(args.train_dataset_path, train_mask_loader, transform=data_transform)
+    test_dataset = utils.mask.ImageFolderWithMaskLoader(args.test_dataset_path, test_mask_loader, transform=data_transform)
+
+    train_size = len(train_dataset)
+    test_size = len(test_dataset)
+
+    train_dl = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
+    test_dl = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
 
     print(f'Training data size is {train_size}')
-    print(f'Test data size is {full_size - train_size}')
+    print(f'Test data size is {test_size}')
 
     ####################################
     # Store and visualize some test data
@@ -220,6 +239,9 @@ def validate(dataloader, model, loss_function, device, args) -> RunningAverage:
 
         timer.reset()
 
+        if (i + 1) * args.batch_size >= args.samples_per_validation:
+            break
+
     print(f'[Validation batches: {len(dataloader)}] {loss_run_avg} | {data_time} | {batch_time})')
 
     return loss_run_avg
@@ -268,6 +290,9 @@ def train(train_dl, test_dl, model, loss_function, optimizer, scaler, device, cu
             print(f'[{i}/{len(train_dl)}] {loss_run_avg} | {data_time} | {batch_time} | Allocated memory: {mem} MBs')
 
         timer.reset()
+
+        if (i + 1) * args.batch_size >= args.samples_per_epoch:
+            break
 
     ##############################
     # Save checkpoint at epoch end

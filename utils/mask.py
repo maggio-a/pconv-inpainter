@@ -94,3 +94,44 @@ class MaskedImageFolderCenter(datasets.ImageFolder):
         mask = F.pad(torch.zeros((3, 56, 56)), (36, 36, 36, 36), mode='constant', value=1.0)
         assert mask.shape == (3, 128, 128)
         return img * mask, img[:, 32:-32, 32:-32]
+
+
+class MaskLoader:
+
+    def __init__(self,
+                 root: str,
+                 transform: Optional[Callable] = None,
+                 ):
+        super(MaskLoader, self).__init__()
+        self.dataset = datasets.ImageFolder(root, transform=transform)
+        self.loader = torch.utils.data.dataloader.DataLoader(self.dataset, batch_size=1, shuffle=True, num_workers=0)
+        self.data_iterator = iter(self.loader)
+
+    def get_mask(self) -> torch.Tensor:
+        try:
+            mask, category = next(self.data_iterator)
+        except StopIteration:
+            self.data_iterator = iter(self.loader)
+            mask, category = next(self.data_iterator)
+        return mask.squeeze()
+
+
+class ImageFolderWithMaskLoader(datasets.ImageFolder):
+
+    def __init__(self,
+                 root: str,
+                 mask_loader: MaskLoader,
+                 transform: Optional[Callable] = None,
+                 target_transform: Optional[Callable] = None,
+                 is_valid_file: Optional[Callable[[str], bool]] = None
+                 ):
+        super(ImageFolderWithMaskLoader, self).__init__(root,
+                                                        transform=transform,
+                                                        target_transform=target_transform,
+                                                        is_valid_file=is_valid_file)
+        self.mask_loader = mask_loader
+
+    def __getitem__(self, index: int) -> Tuple[Any, Any, Any]:
+        img, class_index = super(ImageFolderWithMaskLoader, self).__getitem__(index)
+        mask = self.mask_loader.get_mask()
+        return img * mask, mask, img
