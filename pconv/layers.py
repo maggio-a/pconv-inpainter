@@ -49,26 +49,23 @@ class PartialConv2d(torch.nn.Module):
         else:
             self.register_parameter('bias', None)
 
-        self.out_mask = None
-        self.scaling = None
-
     def forward(self, in_image: torch.Tensor, in_mask: torch.Tensor):
         with torch.no_grad():
-            self.out_mask = F.conv2d(in_mask, self.kernel_ones, bias=None, stride=self.stride, padding=self.padding,
+            out_mask = F.conv2d(in_mask, self.kernel_ones, bias=None, stride=self.stride, padding=self.padding,
                                      dilation=self.dilation, groups=self.groups)
 
-            self.out_mask[self.out_mask == 0] = -1
-            self.scaling = torch.div(self.kernel_volume, self.out_mask)
-            self.out_mask = torch.clamp(self.out_mask, 0, 1)
-            self.scaling = torch.mul(self.scaling, self.out_mask)  # clear masked pixels from self.scaling
+            out_mask[out_mask == 0] = -1
+            scaling = torch.div(self.kernel_volume, out_mask)
+            out_mask = torch.clamp(out_mask, 0, 1)
+            scaling = torch.mul(scaling, out_mask)  # clear masked pixels from scaling
 
         x = F.conv2d(torch.mul(in_image, in_mask), self.weight, self.bias, stride=self.stride, padding=self.padding,
                      dilation=self.dilation, groups=self.groups)
 
         if self.bias is not None:
             b = self.bias.view(1, self.out_channels, 1, 1)
-            out_image = torch.mul(x - b, self.scaling) + b  # do not scale the bias term
+            out_image = torch.mul(x - b, scaling) + b  # do not scale the bias term
         else:
-            out_image = torch.mul(x, self.scaling)
+            out_image = torch.mul(x, scaling)
 
-        return out_image, self.out_mask
+        return out_image, out_mask
