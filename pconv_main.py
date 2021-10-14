@@ -46,6 +46,8 @@ class Args:
 
         self.useAMP = False
 
+        self.edge_sensitive_loss = False
+
 
 def main():
     args = Args()
@@ -75,7 +77,7 @@ def main():
     model = pcmodules.UNet()
     model.to(device)
 
-    loss_function = pcmodules.IrregularHolesLoss()
+    loss_function = pcmodules.IrregularHolesLoss(args.edge_sensitive_loss)
     loss_function.to(device)
 
     lr = 0.0002

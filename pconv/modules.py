@@ -134,7 +134,7 @@ class IrregularHolesLoss(torch.nn.Module):
     vgg16_conv_layers: torch.nn.ModuleList
     l1: torch.nn.Module
 
-    def __init__(self):
+    def __init__(self, reweight_edges: bool):
         super(IrregularHolesLoss, self).__init__()
         vgg_full = torchvision.models.vgg16(pretrained=True)
 
@@ -146,6 +146,8 @@ class IrregularHolesLoss(torch.nn.Module):
             param.requires_grad = False
 
         self.l1 = torch.nn.L1Loss()
+
+        self.reweight_edges = reweight_edges
 
     def _extract_vgg_features(self, x: torch.Tensor):
         """ Extracts vectorized VGG features. """
@@ -163,8 +165,28 @@ class IrregularHolesLoss(torch.nn.Module):
         device = img_out.device
         img_comp = torch.mul(img_gt, mask_in) + torch.mul(img_out, (1 - mask_in))
 
-        hole_loss = ((1 - mask_in) * torch.abs(img_gt - img_out)).mean()
-        valid_loss = (mask_in * torch.abs(img_gt - img_out)).mean()
+        w_edge = 1
+        if self.reweight_edges:
+            g3 = torch.tensor([[1., 3., 1.]], device=device)
+            g3 = g3.T @ g3
+            gaussian3 = (g3 / torch.sum(g3)).view(1, 1, 3, 3).expand(3, 1, 3, 3)
+
+            s1 = torch.tensor([[1., 2., 1.]], device=device)
+            s2 = torch.tensor([[+1., 0., -1.]], device=device)
+            sobel_x = (s1.T @ s2).view(1, 1, 3, 3).expand(1, 3, 3, 3)
+            sobel_y = (s2.T @ s1).view(1, 1, 3, 3).expand(1, 3, 3, 3)
+
+            img_gt_smoothed = F.conv2d(img_gt, gaussian3, stride=1, padding=1, dilation=1, groups=3)
+            img_gx = -0.5 + F.conv2d(img_gt_smoothed, sobel_x, stride=1, padding=1, dilation=1)
+            img_gy = -0.5 + F.conv2d(img_gt_smoothed, sobel_y, stride=1, padding=1, dilation=1)
+
+            # combine gradients to produce the edge weights, max value of the 3x3 sobel operator
+            # with values in the [-1, 1] range is 8, 24 when summing over the RGB channels
+            # since we average gx and gy, just divide by 48
+            w_edge = 1 + ((torch.abs(img_gx) + torch.abs(img_gy)) / 48.)
+
+        hole_loss = ((1 - mask_in) * w_edge * torch.abs(img_gt - img_out)).mean()
+        valid_loss = (mask_in * w_edge * torch.abs(img_gt - img_out)).mean()
 
         img_gt_normalized = self.normalize(img_gt)
         img_out_normalized = self.normalize(img_out)
