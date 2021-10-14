@@ -177,8 +177,8 @@ class IrregularHolesLoss(torch.nn.Module):
             sobel_y = (s2.T @ s1).view(1, 1, 3, 3).expand(1, 3, 3, 3)
 
             img_gt_smoothed = F.conv2d(img_gt, gaussian3, stride=1, padding=1, dilation=1, groups=3)
-            img_gx = -0.5 + F.conv2d(img_gt_smoothed, sobel_x, stride=1, padding=1, dilation=1)
-            img_gy = -0.5 + F.conv2d(img_gt_smoothed, sobel_y, stride=1, padding=1, dilation=1)
+            img_gx = F.conv2d(img_gt_smoothed, sobel_x, stride=1, padding=1, dilation=1)
+            img_gy = F.conv2d(img_gt_smoothed, sobel_y, stride=1, padding=1, dilation=1)
 
             # combine gradients to produce the edge weights, max value of the 3x3 sobel operator
             # with input values in the [0, 1] range is 4, 12 when summing over the RGB channels
