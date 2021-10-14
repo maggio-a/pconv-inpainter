@@ -181,9 +181,9 @@ class IrregularHolesLoss(torch.nn.Module):
             img_gy = -0.5 + F.conv2d(img_gt_smoothed, sobel_y, stride=1, padding=1, dilation=1)
 
             # combine gradients to produce the edge weights, max value of the 3x3 sobel operator
-            # with values in the [-1, 1] range is 8, 24 when summing over the RGB channels
-            # since we average gx and gy, just divide by 48
-            w_edge = 1 + ((torch.abs(img_gx) + torch.abs(img_gy)) / 48.)
+            # with input values in the [0, 1] range is 4, 12 when summing over the RGB channels
+            # since we average gx and gy, just divide by 24
+            w_edge = 1 + ((torch.abs(img_gx) + torch.abs(img_gy)) / 24.)
 
         hole_loss = ((1 - mask_in) * w_edge * torch.abs(img_gt - img_out)).mean()
         valid_loss = (mask_in * w_edge * torch.abs(img_gt - img_out)).mean()
