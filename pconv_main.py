@@ -77,6 +77,9 @@ def main():
     model = pcmodules.UNet()
     model.to(device)
 
+    if args.edge_sensitive_loss:
+        print('Edge-sensitive loss enabled')
+
     loss_function = pcmodules.IrregularHolesLoss(args.edge_sensitive_loss)
     loss_function.to(device)
 
@@ -307,7 +310,8 @@ def train(train_dl, test_dl, model, loss_function, optimizer, scaler, device, cu
         history.append({
             'train_loss': loss_run_avg.avg,
             'val_loss': val_loss_run_avg.avg,
-            'finetuning': args.tuning_phase
+            'finetuning': args.tuning_phase,
+            'edge_sensitive_loss': args.edge_sensitive_loss
         })
         loss_run_avg.reset()
 
