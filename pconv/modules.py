@@ -75,10 +75,10 @@ class UNet(torch.nn.Module):
                 img_out = self.leaky_relu(img_out)
             return img_out, mask_out
 
-    def __init__(self):
+    def __init__(self, in_channels: int):
         super(UNet, self).__init__()
 
-        self.e1 = UNet.EncoderBlock(3, 64, 7, 3, False)
+        self.e1 = UNet.EncoderBlock(in_channels, 64, 7, 3, False)
         self.e2 = UNet.EncoderBlock(64, 128, 5, 2, True)
         self.e3 = UNet.EncoderBlock(128, 256, 5, 2, True)
         self.e4 = UNet.EncoderBlock(256, 512, 3, 1, True)
@@ -94,7 +94,7 @@ class UNet(torch.nn.Module):
         self.d13 = UNet.DecoderBlock(512+256, 256, 3, 1, True, True)
         self.d14 = UNet.DecoderBlock(256+128, 128, 3, 1, True, True)
         self.d15 = UNet.DecoderBlock(128+64, 64, 3, 1, True, True)
-        self.d16 = UNet.DecoderBlock(64+3, 3, 3, 1, False, False)
+        self.d16 = UNet.DecoderBlock(64+in_channels, 3, 3, 1, False, False)
 
         self.activation = torch.nn.Sigmoid()
 

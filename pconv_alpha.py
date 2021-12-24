@@ -2,11 +2,12 @@ import torch
 import torch.optim as optim
 from torch.utils.data.dataloader import DataLoader
 
+import torchvision
 import torchvision.transforms as transforms
 
 import pconv.modules as pcmodules
 
-import utils.mask
+import utils.alpha
 from utils.metering import Timer, RunningAverage
 
 import random
@@ -16,16 +17,16 @@ import os
 import os.path
 import shutil
 
+import matplotlib.pyplot as plt
+
 
 class Args:
     def __init__(self):
-        self.seed = None
+        self.seed = 0
 
         self.gpu = True
 
-        self.train_dataset_path = 'path_to_train_dataset'
-        self.test_dataset_path = 'path_to_test_dataset'
-        self.mask_dataset_path = 'path_to_mask_dataset'
+        self.dataset_path = 'path_to_alpha_dataset'
 
         self.nepochs = 1000
         self.samples_per_epoch = 40000
@@ -34,7 +35,7 @@ class Args:
         self.batch_size = 6
 
         self.load_checkpoint = None
-        self.save_checkpoint_dir = './checkpoints'
+        self.save_checkpoint_dir = './checkpoints_alpha'
         self.coarse_checkpoint_step = 5
 
         self.mode = 'train'  # either 'train' or 'test'
@@ -42,7 +43,7 @@ class Args:
 
         self.useAMP = False
 
-        self.edge_sensitive_loss = False
+        self.edge_sensitive_loss = True
 
 
 def main():
@@ -70,7 +71,7 @@ def main():
     # Load and initialize model, optimizer and state
     ################################################
 
-    model = pcmodules.UNet(in_channels=3)
+    model = pcmodules.UNet(in_channels=4)
     model.to(device)
 
     if args.edge_sensitive_loss:
@@ -123,74 +124,17 @@ def main():
     # Build dataset and DataLoader
     ##############################
 
-    image_size = 512
-
-    data_transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
-        transforms.RandomCrop(image_size, pad_if_needed=True, padding_mode='reflect'),
-        transforms.ToTensor()
-    ])
-
-    mask_transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
-        transforms.RandomAffine(degrees=90, translate=(0.2, 0.2), shear=(-15, 15, -15, 15)),
-        transforms.Resize(size=(image_size, image_size)),
-        transforms.ToTensor(),
-        transforms.Lambda(lambda x: (x == 0).float())
-    ])
-
-    train_mask_loader = utils.mask.MaskLoader(args.mask_dataset_path, transform=mask_transform)
-    test_mask_loader = utils.mask.MaskLoader(args.mask_dataset_path, transform=mask_transform)
-
-    train_dataset = utils.mask.ImageFolderWithMaskLoader(args.train_dataset_path, train_mask_loader, transform=data_transform)
-    test_dataset = utils.mask.ImageFolderWithMaskLoader(args.test_dataset_path, test_mask_loader, transform=data_transform)
+    train_dataset = utils.alpha.AlphaDataset(os.path.join(args.dataset_path, 'dataset_train.csv'), args.dataset_path)
+    test_dataset = utils.alpha.AlphaDataset(os.path.join(args.dataset_path, 'dataset_val.csv'), args.dataset_path)
 
     train_size = len(train_dataset)
     test_size = len(test_dataset)
 
-    train_dl = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
-    test_dl = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
+    train_dl = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    test_dl = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
 
     print(f'Training data size is {train_size}')
     print(f'Test data size is {test_size}')
-
-    ####################################
-    # Store and visualize some test data
-    ####################################
-
-    #model.eval()
-
-    #imglist = []
-    #a = []
-    #b = []
-    #c = []
-
-    #test_data_iterator = iter(test_dl)
-
-    #for i in range(6):
-    #    masked_img, mask, img = map(lambda x: x[0, :, :, :], next(test_data_iterator))
-    #    with torch.no_grad():
-    #        pred, _ = model(masked_img.unsqueeze(0).to(device), mask.unsqueeze(0).to(device))
-    #    imglist.append(masked_img + (1 - mask))
-    #    imglist.append(img)
-    #    imglist.append(pred[0, :, :, :].detach().cpu())
-    #    a.append(masked_img)
-    #    b.append(mask)
-    #    c.append(img)
-
-    #model.train()
-
-    #plt.figure(figsize=(16, 8))
-    #plt.axis('off')
-    #plt.title('MaskedImageFolder')
-
-    #plt.imshow(np.transpose(torchvision.utils.make_grid(imglist,
-    #                                                    padding=2, normalize=False, nrow=3), (1, 2, 0)))
-    #plt.show()
-
-    #test_tensors = torch.stack(a).to(device), torch.stack(b).to(device), torch.stack(c).to(device)
 
     ###################
     # execute the model
@@ -235,7 +179,7 @@ def validate(dataloader, model, loss_function, device, args) -> RunningAverage:
         data_time.update(timer.elapsed())
 
         prediction, _ = model(masked_img_batch, mask_batch)
-        loss_val = loss_function(gt_batch, mask_batch, prediction)
+        loss_val = loss_function(gt_batch[:, 0:3, :, :], mask_batch[:, 0:3, :, :], prediction)
 
         loss_run_avg.update(loss_val.item(), masked_img_batch.size(0))
 
@@ -281,7 +225,7 @@ def train(train_dl, test_dl, model, loss_function, optimizer, scaler, device, cu
 
         with torch.cuda.amp.autocast(enabled=args.useAMP):
             prediction, _ = model(masked_img_batch, mask_batch)
-            loss_val = loss_function(gt_batch, mask_batch, prediction)
+            loss_val = loss_function(gt_batch[:, 0:3, :, :], mask_batch[:, 0:3, :, :], prediction)
 
         loss_run_avg.update(loss_val.item(), masked_img_batch.size(0))
 
@@ -335,3 +279,4 @@ def train(train_dl, test_dl, model, loss_function, optimizer, scaler, device, cu
 
 if __name__ == '__main__':
     main()
+
