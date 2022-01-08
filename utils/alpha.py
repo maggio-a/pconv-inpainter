@@ -45,10 +45,11 @@ class AlphaDataset(Dataset):
 
 
 class AlphaDatasetMaskOnly(Dataset):
-    def __init__(self, csvfile, root_dir, size=(256, 256)):
+    def __init__(self, csvfile, root_dir, size=(256, 256), channels=4):
         self.data_table = pd.read_csv(csvfile, header=None)
         self.root_dir = os.path.abspath(root_dir)
         self.size = size
+        self.channels = channels
 
     def __len__(self):
         return len(self.data_table)
@@ -65,7 +66,7 @@ class AlphaDatasetMaskOnly(Dataset):
 
         mask = TF.to_tensor(mask)
 
-        return mask
+        return mask[0:self.channels, :, :]
 
     def __getitem__(self, idx):
         mask_path = os.path.join(self.root_dir, self.data_table.iloc[idx, 0], self.data_table.iloc[idx, 2])

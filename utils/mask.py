@@ -7,7 +7,9 @@ import torch
 import torch.nn.functional as F
 import torchvision
 import torchvision.datasets as datasets
-from typing import Optional, Callable, Tuple, Any
+from typing import Optional, Callable, Tuple, Any, Union
+
+from . import alpha
 
 
 class MaskGenerator:
@@ -116,11 +118,31 @@ class MaskLoader:
         return mask.squeeze()
 
 
+class AlphaMaskLoader:
+
+    def __init__(self,
+                 csvfile: str,
+                 root: str
+                 ):
+        super(AlphaMaskLoader, self).__init__()
+        self.dataset = alpha.AlphaDatasetMaskOnly(csvfile, root, channels=3)
+        self.loader = torch.utils.data.dataloader.DataLoader(self.dataset, batch_size=1, shuffle=True, num_workers=0)
+        self.data_iterator = iter(self.loader)
+
+    def get_mask(self) -> torch.Tensor:
+        try:
+            mask = next(self.data_iterator)
+        except StopIteration:
+            self.data_iterator = iter(self.loader)
+            mask = next(self.data_iterator)
+        return mask.squeeze()
+
+
 class ImageFolderWithMaskLoader(datasets.ImageFolder):
 
     def __init__(self,
                  root: str,
-                 mask_loader: MaskLoader,
+                 mask_loader: Union[MaskLoader, AlphaMaskLoader],
                  transform: Optional[Callable] = None,
                  target_transform: Optional[Callable] = None,
                  is_valid_file: Optional[Callable[[str], bool]] = None
@@ -135,3 +157,4 @@ class ImageFolderWithMaskLoader(datasets.ImageFolder):
         img, class_index = super(ImageFolderWithMaskLoader, self).__getitem__(index)
         mask = self.mask_loader.get_mask()
         return img * mask, mask, img
+
