@@ -29,10 +29,8 @@ class Args:
         self.alpha_mask_dataset_path = 'path_to_mask_dataset'
 
         self.nepochs = 1000
-        #self.samples_per_epoch = 40000
-        self.samples_per_epoch = 95
-        #self.samples_per_validation = 2000
-        self.samples_per_validation = 30
+        self.samples_per_epoch = 40000
+        self.samples_per_validation = 2000
 
         self.batch_size = 6
 
