@@ -33,7 +33,7 @@ class AlphaDataset(Dataset):
         image = TF.to_tensor(image)
         mask = TF.to_tensor(mask)
 
-        return image, mask
+        return image, mask[0, :, :].expand(4, -1, -1)
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.root_dir, self.data_table.iloc[idx, 0], self.data_table.iloc[idx, 1])
@@ -66,7 +66,7 @@ class AlphaDatasetMaskOnly(Dataset):
 
         mask = TF.to_tensor(mask)
 
-        return mask[0:self.channels, :, :]
+        return mask[0, :, :].expand(self.channels, -1, -1)
 
     def __getitem__(self, idx):
         mask_path = os.path.join(self.root_dir, self.data_table.iloc[idx, 0], self.data_table.iloc[idx, 2])
