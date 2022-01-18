@@ -18,9 +18,10 @@ class AlphaDataset(Dataset):
         return len(self.data_table)
 
     def transform(self, image, mask):
-        resize = T.Resize(size=(256, 256), interpolation=Image.NEAREST)
-        image = resize(image)
-        mask = resize(mask)
+        bands = image.split()
+        bands = [b.resize(size=(256, 256), resample=Image.NEAREST) for b in bands]
+        image = Image.merge('RGBA', bands)
+        mask = mask.resize(size=(256, 256), resample=Image.NEAREST)
 
         if random.random() > 0.5:
             image = TF.vflip(image)
@@ -55,8 +56,7 @@ class AlphaDatasetMaskOnly(Dataset):
         return len(self.data_table)
 
     def transform(self, mask):
-        resize = T.Resize(size=self.size, interpolation=Image.NEAREST)
-        mask = resize(mask)
+        mask = mask.resize(size=self.size, resample=Image.NEAREST)
 
         if random.random() > 0.5:
             mask = TF.vflip(mask)
